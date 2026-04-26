@@ -25,7 +25,8 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.liquibase:liquibase-core")
-    implementation("software.amazon.awssdk:s3")
+    // Source: https://mvnrepository.com/artifact/software.amazon.awssdk/s3
+    implementation("software.amazon.awssdk:s3:2.42.38")
     runtimeOnly("org.postgresql:postgresql")
     compileOnly("org.projectlombok:lombok")
     annotationProcessor("org.springframework.boot:spring-boot-configuration-processor")

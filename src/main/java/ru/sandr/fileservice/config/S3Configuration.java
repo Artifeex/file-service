@@ -1,6 +1,7 @@
 package ru.sandr.fileservice.config;
 
 import java.net.URI;
+
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -19,28 +20,23 @@ public class S3Configuration {
     @Bean
     public S3Client s3Client() {
         return S3Client.builder()
-                .region(Region.of(s3Properties.region()))
-                .endpointOverride(URI.create(s3Properties.endpoint()))
-                .credentialsProvider(StaticCredentialsProvider.create(
-                        AwsBasicCredentials.create(s3Properties.accessKey(), s3Properties.secretKey())
-                ))
-                .serviceConfiguration(software.amazon.awssdk.services.s3.S3Configuration.builder()
-                        .pathStyleAccessEnabled(true)
-                        .build())
-                .build();
+                       .region(Region.of(s3Properties.region()))
+                       .endpointOverride(URI.create(s3Properties.endpoint()))
+                       .credentialsProvider(StaticCredentialsProvider.create(
+                               AwsBasicCredentials.create(s3Properties.accessKey(), s3Properties.secretKey())
+                       ))
+                       .forcePathStyle(true) // Т.к. по умолчанию у aws путь https://bucketName/..., а нам нужен вариант с minio через https://localhost:9090/bucketName
+                       .build();
     }
 
     @Bean
     public S3Presigner s3Presigner() {
         return S3Presigner.builder()
-                .region(Region.of(s3Properties.region()))
-                .endpointOverride(URI.create(s3Properties.endpoint()))
-                .credentialsProvider(StaticCredentialsProvider.create(
-                        AwsBasicCredentials.create(s3Properties.accessKey(), s3Properties.secretKey())
-                ))
-                .serviceConfiguration(software.amazon.awssdk.services.s3.S3Configuration.builder()
-                        .pathStyleAccessEnabled(true)
-                        .build())
-                .build();
+                          .region(Region.of(s3Properties.region()))
+                          .endpointOverride(URI.create(s3Properties.endpoint()))
+                          .credentialsProvider(StaticCredentialsProvider.create(
+                                  AwsBasicCredentials.create(s3Properties.accessKey(), s3Properties.secretKey())
+                          ))
+                          .build();
     }
 }

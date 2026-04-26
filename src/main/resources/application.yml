@@ -1,0 +1,38 @@
+server:
+  port:${SERVER_PORT:8083}
+
+spring:
+  application:
+    name: file-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/file_service}
+    username: ${DB_USERNAME:file_service}
+    password: ${DB_PASSWORD:file_service}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc.time_zone: UTC
+
+  liquibase:
+    enabled: true
+    change-log: classpath:db/changelog/files-changelog-master.yml
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # public-key-location: ${JWT_PUBLIC_KEY_LOCATION:classpath:keys/public.pem}
+          jwk-set-uri: http://users-service/.well-known/jwks.json это endpoint, по которому можно получить public-key для проверки jwt токенов
+
+s3:
+  endpoint: ${S3_ENDPOINT:http://localhost:9000}
+  region: ${S3_REGION:us-east-1}
+  access-key: ${S3_ACCESS_KEY:minioadmin}
+  secret-key: ${S3_SECRET_KEY:minioadmin}
+  public-bucket: ${S3_PUBLIC_BUCKET:public-content}
+  private-bucket: ${S3_PRIVATE_BUCKET:private-content}
