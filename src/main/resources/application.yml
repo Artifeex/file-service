@@ -25,15 +25,20 @@ spring:
         jwt:
           jwk-set-uri: http://localhost:8080/.well-known/jwks.json
   kafka:
-    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:29092}
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
     admin:
       auto-create: false
     consumer:
       group-id: "files-consumer-group"
       auto-offset-reset: earliest
 
-fileConsumer:
-
+file-consumer:
+  file-event-topic-name: my-custom-topic
+  delay-between-retries: 1000
+  file-deleted-event-name: "file_deleted_event"
+  file-loaded-event-name: "file_loaded_event"
+  max-attempts: 5
+  type-header-name: "type_id"
 
 s3:
   endpoint: ${S3_ENDPOINT:http://localhost:9000}

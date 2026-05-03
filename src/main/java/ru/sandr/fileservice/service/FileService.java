@@ -13,8 +13,9 @@ import ru.sandr.fileservice.dto.upload.UploadUrlResponse;
 import ru.sandr.fileservice.entity.FileMetadata;
 import ru.sandr.fileservice.entity.FileStatus;
 import ru.sandr.fileservice.enums.UserRole;
+import ru.sandr.fileservice.exception.AccessDeniedException;
+import ru.sandr.fileservice.exception.BadRequestException;
 import ru.sandr.fileservice.exception.ObjectNotFoundException;
-import ru.sandr.fileservice.exception.ValidationException;
 import ru.sandr.fileservice.mapper.FileMapper;
 import ru.sandr.fileservice.service.policy.UploadPolicy;
 import ru.sandr.fileservice.service.policy.UploadPolicyFactory;
@@ -83,12 +84,12 @@ public class FileService {
     @Transactional
     public void commitFile(UUID fileId) {
         FileMetadata fileMetadata = fileRepository.findById(fileId)
-                                                  .orElseThrow(() -> new ObjectNotFoundException("File not found: " + fileId));
+                                                  .orElseThrow(() -> new ObjectNotFoundException("OBJECT_NOT_FOUND", "File not found: " + fileId));
 
         if (fileMetadata.getStatus() == FileStatus.PENDING) {
             boolean exists = s3Service.objectExists(fileMetadata.getBucketName(), fileMetadata.getS3Key());
             if (!exists) {
-                throw new ValidationException("File object was not uploaded to storage yet");
+                throw new ObjectNotFoundException("OBJECT_NOT_FOUND", "File object was not uploaded to storage yet");
             }
             fileMetadata.setStatus(FileStatus.ACTIVE);
         }
@@ -97,17 +98,17 @@ public class FileService {
     @Transactional(readOnly = true)
     public DownloadUrlResponse generateDownloadUrl(UserContext userContext, UUID fileId) {
         FileMetadata fileMetadata = fileRepository.findById(fileId)
-                                                  .orElseThrow(() -> new ObjectNotFoundException("File not found: " + fileId));
+                                                  .orElseThrow(() -> new ObjectNotFoundException("OBJECT_NOT_FOUND", "File not found: " + fileId));
 
         if (fileMetadata.getStatus() != FileStatus.ACTIVE) {
-            throw new ValidationException("File is not ACTIVE");
+            throw new BadRequestException("FILE_IS_NOT_ACTIVE", "File is not ACTIVE");
         }
 
         if (isPublicBucket(fileMetadata.getBucketName())) {
             return new DownloadUrlResponse(buildPublicFileUrl(fileMetadata.getBucketName(), fileMetadata.getS3Key()));
         }
         if (!isHavePermission(userContext, fileMetadata)) {
-            throw new ValidationException("User is not have permission to download file");
+            throw new AccessDeniedException("ACCESS_DENIED", "User is not have permission to download file");
         }
 
         String downloadUrl = s3Service.generatePresignedGetUrl(new PresignedGetUrlRequest(
@@ -140,7 +141,7 @@ public class FileService {
 
     public void deleteFile(UUID fileId) {
         var fileMetadata = fileRepository.findById(fileId)
-                                         .orElseThrow(() -> new ObjectNotFoundException("File not found: " + fileId));
+                                         .orElseThrow(() -> new ObjectNotFoundException("OBJECT_NOT_FOUND", "File not found: " + fileId));
         fileRepository.delete(fileMetadata);
         var isFileExists = s3Service.objectExists(fileMetadata.getBucketName(), fileMetadata.getS3Key());
         if (isFileExists) {

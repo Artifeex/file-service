@@ -11,7 +11,7 @@ import ru.sandr.fileservice.service.FileService;
 import java.util.UUID;
 
 @Service
-@KafkaListener(topics = "${file-consumer.fileEventTopicName}", containerFactory = "kafkaListenerContainerFactory")
+@KafkaListener(topics = "${file-consumer.file-event-topic-name}", containerFactory = "kafkaListenerContainerFactory")
 @RequiredArgsConstructor
 public class FileEventListener {
 

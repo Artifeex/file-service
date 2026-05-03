@@ -10,13 +10,17 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
+import ru.sandr.fileservice.handler.FilterChainExceptionHandler;
 
 @Configuration
 @EnableMethodSecurity
 public class SecurityConfiguration {
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain securityFilterChain(
+            HttpSecurity http,
+            FilterChainExceptionHandler filterChainExceptionHandler
+    ) throws Exception {
         http
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -30,7 +34,8 @@ public class SecurityConfiguration {
                 .oauth2ResourceServer(oauth -> oauth
                         // Передаем наш кастомный конвертер сюда
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter()))
-                        .authenticationEntryPoint()
+                        .authenticationEntryPoint(filterChainExceptionHandler)
+                        .accessDeniedHandler(filterChainExceptionHandler)
                 );
 
         return http.build();
