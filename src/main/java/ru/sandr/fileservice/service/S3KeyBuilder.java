@@ -1,7 +1,5 @@
 package ru.sandr.fileservice.service;
 
-import java.util.Locale;
-import java.util.UUID;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import ru.sandr.fileservice.dto.upload.FileDomain;
@@ -10,7 +8,10 @@ import ru.sandr.fileservice.dto.upload.context.CourseAvatarContext;
 import ru.sandr.fileservice.dto.upload.context.CourseMaterialContext;
 import ru.sandr.fileservice.dto.upload.context.TaskAnswerContext;
 import ru.sandr.fileservice.dto.upload.context.UserAvatarContext;
-import ru.sandr.fileservice.exception.ValidationException;
+import ru.sandr.fileservice.exception.BadRequestException;
+
+import java.util.Locale;
+import java.util.UUID;
 
 @Component
 public class S3KeyBuilder {
@@ -38,7 +39,11 @@ public class S3KeyBuilder {
             }
             case ANSWER_FILE -> {
                 var answerFileContext = (TaskAnswerContext) uploadUrlRequest.context();
-                yield TASK_ANSWER_S3_KEY_PATTERN.formatted(answerFileContext.courseId(), answerFileContext.userId(), s3FileName);
+                yield TASK_ANSWER_S3_KEY_PATTERN.formatted(
+                        answerFileContext.courseId(),
+                        answerFileContext.userId(),
+                        s3FileName
+                );
             }
         };
     }
@@ -52,17 +57,20 @@ public class S3KeyBuilder {
 
     private String extractExtension(String filename) {
         if (!StringUtils.hasText(filename)) {
-            throw new ValidationException("filename must not be blank");
+            throw new BadRequestException("FILE_NAME_IS_EMPTY", "filename must not be blank");
         }
 
         int dotIndex = filename.lastIndexOf('.');
         if (dotIndex < 0 || dotIndex == filename.length() - 1) {
-            throw new ValidationException("filename must include a valid extension");
+            throw new BadRequestException("NOT_VALID_FILE_EXTENSION", "filename must include a valid extension");
         }
 
         String extension = filename.substring(dotIndex + 1).toLowerCase(Locale.ROOT);
         if (!extension.matches("[a-z0-9]{1,10}")) {
-            throw new ValidationException("filename extension contains unsupported characters");
+            throw new BadRequestException(
+                    "NOT_VALID_FILE_EXTENSION",
+                    "filename extension contains unsupported characters"
+            );
         }
         return extension;
     }

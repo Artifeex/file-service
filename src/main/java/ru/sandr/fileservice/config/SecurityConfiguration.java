@@ -30,6 +30,7 @@ public class SecurityConfiguration {
                 .oauth2ResourceServer(oauth -> oauth
                         // Передаем наш кастомный конвертер сюда
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter()))
+                        .authenticationEntryPoint()
                 );
 
         return http.build();

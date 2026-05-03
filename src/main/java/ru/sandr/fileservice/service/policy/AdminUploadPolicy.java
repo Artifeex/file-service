@@ -1,12 +1,8 @@
 package ru.sandr.fileservice.service.policy;
 
-import java.util.UUID;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 import ru.sandr.fileservice.dto.upload.FileDomain;
-import ru.sandr.fileservice.exception.ValidationException;
-import ru.sandr.fileservice.dto.UploadContext;
-import ru.sandr.fileservice.dto.upload.context.FileContext;
+import ru.sandr.fileservice.enums.UserRole;
 import ru.sandr.fileservice.service.UserContext;
 
 @Component
@@ -14,7 +10,7 @@ public class AdminUploadPolicy implements UploadPolicy {
 
     @Override
     public boolean supports(UserContext userContext) {
-        return userContext.roles().contains("ROLE_ADMIN");
+        return userContext.roles().contains(UserRole.ROLE_ADMIN.name());
     }
 
     @Override

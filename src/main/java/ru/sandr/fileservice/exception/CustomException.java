@@ -1,17 +1,14 @@
 package ru.sandr.fileservice.exception;
 
-import org.springframework.http.HttpStatus;
+import lombok.Getter;
 
-public abstract class CustomException extends RuntimeException {
+@Getter
+public class CustomException extends RuntimeException {
+    private final String code;
 
-    private final HttpStatus status;
-
-    protected CustomException(HttpStatus status, String message) {
+    public CustomException(String code, String message) {
         super(message);
-        this.status = status;
-    }
-
-    public HttpStatus getStatus() {
-        return status;
+        this.code = code;
     }
 }
+
