@@ -1,25 +1,20 @@
 package ru.sandr.fileservice.service;
 
-import java.time.Duration;
-import java.util.Collection;
-import java.util.UUID;
-import java.util.stream.Collectors;
-
 import lombok.RequiredArgsConstructor;
+import org.apache.commons.collections4.CollectionUtils;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import ru.sandr.fileservice.config.S3Properties;
+import ru.sandr.fileservice.dao.FileRepository;
+import ru.sandr.fileservice.dto.DownloadUrlResponse;
 import ru.sandr.fileservice.dto.upload.UploadUrlRequest;
+import ru.sandr.fileservice.dto.upload.UploadUrlResponse;
+import ru.sandr.fileservice.entity.FileMetadata;
+import ru.sandr.fileservice.entity.FileStatus;
+import ru.sandr.fileservice.enums.UserRole;
 import ru.sandr.fileservice.exception.ObjectNotFoundException;
 import ru.sandr.fileservice.exception.ValidationException;
-import ru.sandr.fileservice.config.S3Properties;
-import ru.sandr.fileservice.dto.CommitFileRequest;
-import ru.sandr.fileservice.dto.CommitFileResponse;
-import ru.sandr.fileservice.dto.DownloadUrlResponse;
-import ru.sandr.fileservice.dto.upload.UploadRequestResponse;
-import ru.sandr.fileservice.entity.FileMetadata;
-import ru.sandr.fileservice.dao.FileRepository;
-import ru.sandr.fileservice.entity.FileStatus;
 import ru.sandr.fileservice.mapper.FileMapper;
 import ru.sandr.fileservice.service.policy.UploadPolicy;
 import ru.sandr.fileservice.service.policy.UploadPolicyFactory;
@@ -27,30 +22,39 @@ import ru.sandr.fileservice.storage.S3Service;
 import ru.sandr.fileservice.storage.dto.PresignedGetUrlRequest;
 import ru.sandr.fileservice.storage.dto.PresignedPutUrlRequest;
 
+import java.time.Duration;
+import java.util.Collection;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
 @Service
 @RequiredArgsConstructor
 public class FileService {
 
-    private static final long MAX_FILE_SIZE_BYTES = 300L * 1024 * 1024;
     private static final Duration UPLOAD_URL_TTL = Duration.ofMinutes(15);
     private static final Duration DOWNLOAD_URL_TTL = Duration.ofHours(2);
 
     private final FileRepository fileRepository;
     private final S3Service s3Service;
     private final S3Properties s3Properties;
-    private final UserContextExtractor userContextExtractor;
     private final UploadPolicyFactory uploadPolicyFactory;
     private final S3KeyBuilder s3KeyBuilder;
     private final FileMapper fileMapper;
 
     @Transactional
-    public UploadRequestResponse createUploadRequest(UploadUrlRequest uploadUrlRequest, UUID userId, Collection<GrantedAuthority> authorities) {
+    public UploadUrlResponse createUploadRequest(
+            UploadUrlRequest uploadUrlRequest,
+            UUID userId,
+            Collection<? extends GrantedAuthority> authorities
+    ) {
         // Проверить, что текущий пользователь имеет право на загрузку контента, а так же, что пееданный тип является допустимым
         var domain = uploadUrlRequest.domain();
         domain.validateContentType(uploadUrlRequest.contentType());
         // Проверить, что текущий пользователь имеет право на загрузку данного типа контента
-        UserContext userContext = new UserContext(userId, authorities.stream().map(GrantedAuthority::getAuthority).collect(
-                Collectors.toSet()));
+        UserContext userContext = new UserContext(
+                userId, authorities.stream().map(GrantedAuthority::getAuthority).collect(
+                Collectors.toSet())
+        );
         UploadPolicy uploadPolicy = uploadPolicyFactory.resolve(userContext);
         uploadPolicy.checkPermission(domain, userContext);
 
@@ -73,13 +77,13 @@ public class FileService {
                 UPLOAD_URL_TTL
         ));
 
-        return new UploadRequestResponse(fileId, uploadUrl);
+        return new UploadUrlResponse(fileId, uploadUrl);
     }
 
     @Transactional
-    public CommitFileResponse commitFile(CommitFileRequest request) {
-        FileMetadata fileMetadata = fileRepository.findById(request.fileId())
-                                                  .orElseThrow(() -> new ObjectNotFoundException("File not found: " + request.fileId()));
+    public void commitFile(UUID fileId) {
+        FileMetadata fileMetadata = fileRepository.findById(fileId)
+                                                  .orElseThrow(() -> new ObjectNotFoundException("File not found: " + fileId));
 
         if (fileMetadata.getStatus() == FileStatus.PENDING) {
             boolean exists = s3Service.objectExists(fileMetadata.getBucketName(), fileMetadata.getS3Key());
@@ -88,17 +92,10 @@ public class FileService {
             }
             fileMetadata.setStatus(FileStatus.ACTIVE);
         }
-
-        String fileUrl = null;
-        if (isPublicBucket(fileMetadata.getBucketName())) {
-            fileUrl = buildPublicFileUrl(fileMetadata.getBucketName(), fileMetadata.getS3Key());
-        }
-
-        return new CommitFileResponse(fileMetadata.getId(), fileUrl);
     }
 
     @Transactional(readOnly = true)
-    public DownloadUrlResponse generateDownloadUrl(UUID fileId) {
+    public DownloadUrlResponse generateDownloadUrl(UserContext userContext, UUID fileId) {
         FileMetadata fileMetadata = fileRepository.findById(fileId)
                                                   .orElseThrow(() -> new ObjectNotFoundException("File not found: " + fileId));
 
@@ -109,14 +106,28 @@ public class FileService {
         if (isPublicBucket(fileMetadata.getBucketName())) {
             return new DownloadUrlResponse(buildPublicFileUrl(fileMetadata.getBucketName(), fileMetadata.getS3Key()));
         }
+        if (!isHavePermission(userContext, fileMetadata)) {
+            throw new ValidationException("User is not have permission to download file");
+        }
 
         String downloadUrl = s3Service.generatePresignedGetUrl(new PresignedGetUrlRequest(
-                fileMetadata.getBucketName(),
-                fileMetadata.getS3Key(),
+                fileMetadata,
                 DOWNLOAD_URL_TTL
         ));
 
         return new DownloadUrlResponse(downloadUrl);
+    }
+
+    private boolean isHavePermission(UserContext userContext, FileMetadata fileMetadata) {
+        if (CollectionUtils.isEmpty(userContext.roles())) {
+            return false;
+        }
+        if (userContext.roles().contains(UserRole.ROLE_ADMIN.name()) || userContext.roles()
+                                                                                   .contains(UserRole.ROLE_TEACHER.name())) {
+            return true;
+        }
+        return userContext.roles().contains(UserRole.ROLE_STUDENT.name()) && fileMetadata.getOwnerId()
+                                                                                         .equals(userContext.userId());
     }
 
     private boolean isPublicBucket(String bucketName) {
@@ -124,8 +135,16 @@ public class FileService {
     }
 
     private String buildPublicFileUrl(String bucketName, String s3Key) {
-        String endpoint = s3Properties.endpoint();
-        String normalizedEndpoint = endpoint.endsWith("/") ? endpoint.substring(0, endpoint.length() - 1) : endpoint;
-        return normalizedEndpoint + "/" + bucketName + "/" + s3Key;
+        return s3Properties.endpoint() + "/" + bucketName + "/" + s3Key;
+    }
+
+    public void deleteFile(UUID fileId) {
+        var fileMetadata = fileRepository.findById(fileId)
+                                         .orElseThrow(() -> new ObjectNotFoundException("File not found: " + fileId));
+        fileRepository.delete(fileMetadata);
+        var isFileExists = s3Service.objectExists(fileMetadata.getBucketName(), fileMetadata.getS3Key());
+        if (isFileExists) {
+            s3Service.deleteObject(fileMetadata.getBucketName(), fileMetadata.getS3Key());
+        }
     }
 }

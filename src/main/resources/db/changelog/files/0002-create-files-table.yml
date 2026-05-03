@@ -1,6 +1,6 @@
 databaseChangeLog:
   - changeSet:
-      id: 0001-create-files-table
+      id: 0002-1
       author: AVSmirnov
       changes:
         - createTable:
@@ -33,7 +33,7 @@ databaseChangeLog:
                     nullable: false
                   remarks: "Название бакета"
               - column:
-                  name: object_key
+                  name: s3_key
                   type: VARCHAR(1024)
                   constraints:
                     nullable: false
@@ -51,7 +51,7 @@ databaseChangeLog:
                     nullable: false
                   remarks: "Тип файла"
               - column:
-                  name: file_status
+                  name: status
                   type: varchar
                   constraints:
                     nullable: false
@@ -67,8 +67,8 @@ databaseChangeLog:
         - addUniqueConstraint:
             schemaName: files
             tableName: file_metadata
-            columnNames: object_key
-            constraintName: uk_file_metadata_object_key
+            columnNames: s3_key
+            constraintName: uk_file_metadata_s3_key
         - createIndex:
             schemaName: files
             tableName: file_metadata

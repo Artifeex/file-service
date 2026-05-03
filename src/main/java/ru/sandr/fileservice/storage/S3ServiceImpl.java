@@ -1,9 +1,11 @@
 package ru.sandr.fileservice.storage;
 
-import java.time.Duration;
+import java.nio.charset.StandardCharsets;
+import java.util.Set;
+
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.util.StringUtils;
+import org.springframework.web.util.UriUtils;
 import ru.sandr.fileservice.storage.dto.PresignedGetUrlRequest;
 import ru.sandr.fileservice.storage.dto.PresignedPutUrlRequest;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -22,34 +24,56 @@ public class S3ServiceImpl implements S3Service {
     private final S3Client s3Client;
     private final S3Presigner s3Presigner;
 
+    // Белый список MIME-типов, которые безопасно открывать в браузере
+    private static final Set<String> SAFE_INLINE_TYPES = Set.of(
+            "application/pdf",
+            "image/jpeg", "image/png", "image/webp", "image/gif",
+            "video/mp4", "video/webm",
+            "audio/mpeg", "audio/ogg"
+    );
+
     @Override
     public String generatePresignedPutUrl(PresignedPutUrlRequest request) {
         PutObjectRequest putObjectRequest = PutObjectRequest.builder()
-                .bucket(request.bucketName())
-                .key(request.s3Key())
-                .contentType(request.contentType())
-                .build();
+                                                            .bucket(request.bucketName())
+                                                            .key(request.s3Key())
+                                                            .contentType(request.contentType())
+                                                            .build();
 
         PutObjectPresignRequest presignRequest = PutObjectPresignRequest.builder()
-                .signatureDuration(request.expiresIn())
-                .putObjectRequest(putObjectRequest)
-                .build();
+                                                                        .signatureDuration(request.expiresIn())
+                                                                        .putObjectRequest(putObjectRequest)
+                                                                        .build();
 
         return s3Presigner.presignPutObject(presignRequest).url().toString();
     }
 
     @Override
     public String generatePresignedGetUrl(PresignedGetUrlRequest request) {
+        var fileMetadata = request.fileMetadata();
+        // Для кодирования русских символов, которые не поддерживаеются браузерами в заголовках.
+        // Но потом, т.к. мы передаем браузеру информацию о том, что мы закодировали имя файла - то он его
+        // Для отображения уже раскодирует, но при этом при передаче от s3 в браузер имя файла будет закодировано
+        String encodedFilename = UriUtils.encode(fileMetadata.getFileName(), StandardCharsets.UTF_8);
+        String nameParameters = "filename*=UTF-8''" + encodedFilename;
+        String disposition;
+        if (SAFE_INLINE_TYPES.contains(fileMetadata.getContentType())) {
+            disposition = "inline; " + nameParameters;
+        } else {
+            disposition = "attachment; " + nameParameters;
+        }
 
         GetObjectRequest getObjectRequest = GetObjectRequest.builder()
-                .bucket(request.bucketName())
-                .key(request.s3Key())
-                .build();
+                                                            .bucket(fileMetadata.getBucketName())
+                                                            .key(fileMetadata.getS3Key())
+                                                            .responseContentType(fileMetadata.getContentType())
+                                                            .responseContentDisposition(disposition)
+                                                            .build();
 
         GetObjectPresignRequest presignRequest = GetObjectPresignRequest.builder()
-                .signatureDuration(request.expiresIn())
-                .getObjectRequest(getObjectRequest)
-                .build();
+                                                                        .signatureDuration(request.expiresIn())
+                                                                        .getObjectRequest(getObjectRequest)
+                                                                        .build();
 
         return s3Presigner.presignGetObject(presignRequest).url().toString();
     }
@@ -59,9 +83,9 @@ public class S3ServiceImpl implements S3Service {
 
         try {
             s3Client.headObject(HeadObjectRequest.builder()
-                    .bucket(bucketName)
-                    .key(s3Key)
-                    .build());
+                                                 .bucket(bucketName)
+                                                 .key(s3Key)
+                                                 .build());
             return true;
         } catch (S3Exception exception) {
             if (exception.statusCode() == 404) {
@@ -74,8 +98,8 @@ public class S3ServiceImpl implements S3Service {
     @Override
     public void deleteObject(String bucketName, String s3Key) {
         s3Client.deleteObject(DeleteObjectRequest.builder()
-                .bucket(bucketName)
-                .key(s3Key)
-                .build());
+                                                 .bucket(bucketName)
+                                                 .key(s3Key)
+                                                 .build());
     }
 }

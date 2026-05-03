@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: university-minio
+    ports:
+      - "9000:9000" # Порт для API (К нему подключается Java и фронтенд)
+      - "9001:9001" # Порт для красивого Web UI (Консоль администратора)
+    environment:
+      MINIO_ROOT_USER: admin_access_key
+      MINIO_ROOT_PASSWORD: admin_secret_key
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data # Сохраняем файлы на жестком диске даже после рестарта докера
+    restart: unless-stopped
+
+  # Контейнер-инициализатор. Выполнит скрипт и завершит работу.
+  minio-init:
+    image: minio/mc:latest
+    container_name: university-minio-init
+    depends_on:
+      - minio
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        echo "Ожидание запуска MinIO..."
+        while ! mc alias set myminio http://minio:9000 admin_access_key admin_secret_key; do
+          echo "MinIO еще не готов, ждем 2 секунды..."
+          sleep 2
+        done
+        
+        echo "MinIO запущен. Создание бакетов..."
+        mc mb myminio/university-public || true
+        mc mb myminio/university-private || true
+        
+        echo "Настройка политик доступа..."
+        mc anonymous set download myminio/university-public
+        
+        echo "Инициализация завершена!"
+
+volumes:
+  minio_data:

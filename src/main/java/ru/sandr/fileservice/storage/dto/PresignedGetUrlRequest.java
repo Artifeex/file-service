@@ -1,10 +1,11 @@
 package ru.sandr.fileservice.storage.dto;
 
+import ru.sandr.fileservice.entity.FileMetadata;
+
 import java.time.Duration;
 
 public record PresignedGetUrlRequest(
-        String bucketName,
-        String s3Key,
+        FileMetadata fileMetadata,
         Duration expiresIn
 ) {
 }

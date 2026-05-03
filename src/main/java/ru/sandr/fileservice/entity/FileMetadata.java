@@ -10,7 +10,7 @@ import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.UUID;
-import lombok.AccessLevel;
+
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -35,8 +35,8 @@ public class FileMetadata {
     /**
      * Имя файла с расширением
      */
-    @Column(name = "original_filename", nullable = false)
-    private String originalFilename;
+    @Column(name = "file_name", nullable = false)
+    private String fileName;
 
     @Column(name = "bucket_name", nullable = false)
     private String bucketName;

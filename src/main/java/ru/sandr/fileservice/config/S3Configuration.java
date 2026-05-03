@@ -31,7 +31,13 @@ public class S3Configuration {
 
     @Bean
     public S3Presigner s3Presigner() {
+        software.amazon.awssdk.services.s3.S3Configuration s3Configuration =
+                software.amazon.awssdk.services.s3.S3Configuration.builder()
+                                                                  .pathStyleAccessEnabled(true)
+                                                                  .build();
+
         return S3Presigner.builder()
+                          .serviceConfiguration(s3Configuration)
                           .region(Region.of(s3Properties.region()))
                           .endpointOverride(URI.create(s3Properties.endpoint()))
                           .credentialsProvider(StaticCredentialsProvider.create(

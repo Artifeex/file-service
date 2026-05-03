@@ -4,20 +4,15 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
-import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
+import ru.sandr.fileservice.dto.DownloadUrlResponse;
 import ru.sandr.fileservice.dto.upload.UploadUrlRequest;
-import ru.sandr.fileservice.dto.upload.context.FileContext;
-import ru.sandr.fileservice.dto.upload.UploadRequestResponse;
+import ru.sandr.fileservice.dto.upload.UploadUrlResponse;
 import ru.sandr.fileservice.service.FileService;
+import ru.sandr.fileservice.service.UserContext;
 
-import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @RestController
 @RequiredArgsConstructor
@@ -27,11 +22,24 @@ public class FileController {
     private final FileService fileService;
 
     @PostMapping("/upload-request")
-    public UploadRequestResponse createUploadRequest(
+    public UploadUrlResponse createUploadRequest(
             @Valid @RequestBody UploadUrlRequest uploadUrlRequest,
-            @AuthenticationPrincipal JwtAuthenticationToken jwt
+            Authentication authentication
     ) {
-        UUID userId = UUID.fromString(jwt.getName());
-        return fileService.createUploadRequest(uploadUrlRequest, userId, jwt.getAuthorities());
+        UUID userId = UUID.fromString(authentication.getName());
+        return fileService.createUploadRequest(uploadUrlRequest, userId, authentication.getAuthorities());
+    }
+
+    @GetMapping("/{fileId}")
+    public DownloadUrlResponse getDownloadUrl(
+            @PathVariable(required = true) UUID fileId,
+            Authentication authentication
+    ) {
+        UserContext userContext = new UserContext(
+                UUID.fromString(authentication.getName()), authentication.getAuthorities().stream().map(
+                GrantedAuthority::getAuthority).collect(
+                Collectors.toSet())
+        );
+        return fileService.generateDownloadUrl(userContext, fileId);
     }
 }

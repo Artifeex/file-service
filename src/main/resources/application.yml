@@ -1,13 +1,10 @@
-server:
-  port:${SERVER_PORT:8083}
-
 spring:
   application:
     name: file-service
   datasource:
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/file_service}
-    username: ${DB_USERNAME:file_service}
-    password: ${DB_PASSWORD:file_service}
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/users}
+    username: ${DB_USERNAME:users}
+    password: ${DB_PASSWORD:users}
     driver-class-name: org.postgresql.Driver
 
   jpa:
@@ -26,13 +23,30 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-          # public-key-location: ${JWT_PUBLIC_KEY_LOCATION:classpath:keys/public.pem}
-          jwk-set-uri: http://users-service/.well-known/jwks.json это endpoint, по которому можно получить public-key для проверки jwt токенов
+          jwk-set-uri: http://localhost:8080/.well-known/jwks.json
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:29092}
+    admin:
+      auto-create: false
+    consumer:
+      group-id: "files-consumer-group"
+      auto-offset-reset: earliest
+
+fileConsumer:
+
 
 s3:
   endpoint: ${S3_ENDPOINT:http://localhost:9000}
   region: ${S3_REGION:us-east-1}
-  access-key: ${S3_ACCESS_KEY:minioadmin}
-  secret-key: ${S3_SECRET_KEY:minioadmin}
-  public-bucket: ${S3_PUBLIC_BUCKET:public-content}
-  private-bucket: ${S3_PRIVATE_BUCKET:private-content}
+  access-key: ${S3_ACCESS_KEY:admin_access_key}
+  secret-key: ${S3_SECRET_KEY:admin_secret_key}
+  public-bucket: ${S3_PUBLIC_BUCKET:university-public}
+  private-bucket: ${S3_PRIVATE_BUCKET:university-private}
+server:
+  port: ${SERVER_PORT:8087}
+logging:
+  level:
+    org.springframework.security: DEBUG
+    org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter: TRACE
+    org.springframework.web.HttpLogging: DEBUG
+    org.apache.catalina.core.ContainerBase: DEBUG

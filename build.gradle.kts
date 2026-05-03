@@ -27,6 +27,8 @@ dependencies {
     implementation("org.liquibase:liquibase-core")
     // Source: https://mvnrepository.com/artifact/software.amazon.awssdk/s3
     implementation("software.amazon.awssdk:s3:2.42.38")
+    implementation("org.springframework.kafka:spring-kafka")
+    testImplementation("org.springframework.kafka:spring-kafka-test")
     runtimeOnly("org.postgresql:postgresql")
     compileOnly("org.projectlombok:lombok")
     annotationProcessor("org.springframework.boot:spring-boot-configuration-processor")

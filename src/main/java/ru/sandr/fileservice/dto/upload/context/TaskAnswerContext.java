@@ -6,6 +6,7 @@ import java.util.UUID;
 
 @JsonTypeName("TASK_ANSWER")
 public record TaskAnswerContext(
+        String domain,
         UUID courseId,
         UUID userId
 ) implements FileContext {

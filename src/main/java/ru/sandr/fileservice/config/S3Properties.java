@@ -7,7 +7,7 @@ import org.springframework.validation.annotation.Validated;
 @Validated
 @ConfigurationProperties(prefix = "s3")
 public record S3Properties(
-        @NotBlank String endpoint,
+        @NotBlank String endpoint, // Не должен заканчиваться на слэш. Т.е. должен быть в формате localhost:9090
         @NotBlank String region,
         @NotBlank String accessKey,
         @NotBlank String secretKey,
