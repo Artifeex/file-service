@@ -1,6 +1,7 @@
 package ru.sandr.fileservice.consumer.config;
 
 import lombok.AllArgsConstructor;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,6 +33,7 @@ import java.util.Map;
 @Configuration
 @AllArgsConstructor
 @EnableKafka
+@Getter
 public class KafkaConfig {
 
     private FileConsumerConfig fileConsumerConfig;

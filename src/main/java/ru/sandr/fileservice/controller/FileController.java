@@ -6,6 +6,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.web.bind.annotation.*;
 import ru.sandr.fileservice.dto.DownloadUrlResponse;
+import ru.sandr.fileservice.dto.FileInfoResponse;
 import ru.sandr.fileservice.dto.upload.UploadUrlRequest;
 import ru.sandr.fileservice.dto.upload.UploadUrlResponse;
 import ru.sandr.fileservice.service.FileService;
@@ -30,7 +31,7 @@ public class FileController {
         return fileService.createUploadRequest(uploadUrlRequest, userId, authentication.getAuthorities());
     }
 
-    @GetMapping("/{fileId}")
+    @GetMapping("/download-url/{fileId}")
     public DownloadUrlResponse getDownloadUrl(
             @PathVariable(required = true) UUID fileId,
             Authentication authentication
@@ -41,5 +42,10 @@ public class FileController {
                 Collectors.toSet())
         );
         return fileService.generateDownloadUrl(userContext, fileId);
+    }
+
+    @GetMapping("/{fileId}")
+    public FileInfoResponse getFileInfo(@PathVariable(required = true) UUID fileId) {
+        return fileService.getFileInfo(fileId);
     }
 }

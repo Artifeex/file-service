@@ -81,6 +81,19 @@ services:
         echo 'Topic created successfully!'
       "
     restart: "no"
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8090:8080" # Доступно в браузере по http://localhost:8090
+    environment:
+      # Настройки подключения UI к нашей Kafka
+      - KAFKA_CLUSTERS_0_NAME=Local-Kafka
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:29092 # Подключаемся по внутренней Docker-сети
+      - DYNAMIC_CONFIG_ENABLED=true
+    depends_on:
+      kafka:
+        condition: service_healthy
 
 volumes:
   minio_data:

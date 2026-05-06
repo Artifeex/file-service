@@ -35,10 +35,10 @@ spring:
 file-consumer:
   file-event-topic-name: my-custom-topic
   delay-between-retries: 1000
-  file-deleted-event-name: "file_deleted_event"
-  file-loaded-event-name: "file_loaded_event"
+  file-deleted-event-name: "FileDeletedEvent"
+  file-loaded-event-name: "FileLoadedEvent"
   max-attempts: 5
-  type-header-name: "type_id"
+  type-header-name: "event_type"
 
 s3:
   endpoint: ${S3_ENDPOINT:http://localhost:9000}

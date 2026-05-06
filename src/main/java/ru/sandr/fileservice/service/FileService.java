@@ -8,6 +8,7 @@ import org.springframework.transaction.annotation.Transactional;
 import ru.sandr.fileservice.config.S3Properties;
 import ru.sandr.fileservice.dao.FileRepository;
 import ru.sandr.fileservice.dto.DownloadUrlResponse;
+import ru.sandr.fileservice.dto.FileInfoResponse;
 import ru.sandr.fileservice.dto.upload.UploadUrlRequest;
 import ru.sandr.fileservice.dto.upload.UploadUrlResponse;
 import ru.sandr.fileservice.entity.FileMetadata;
@@ -147,5 +148,16 @@ public class FileService {
         if (isFileExists) {
             s3Service.deleteObject(fileMetadata.getBucketName(), fileMetadata.getS3Key());
         }
+    }
+
+    public FileInfoResponse getFileInfo(UUID fileId) {
+        var fileMetadata = fileRepository.findById(fileId)
+                                         .orElseThrow(() -> new ObjectNotFoundException("OBJECT_NOT_FOUND", "File not found: " + fileId));
+        return new FileInfoResponse(
+                fileMetadata.getId(),
+                fileMetadata.getFileName(),
+                fileMetadata.getContentType(),
+                fileMetadata.getStatus().name()
+        );
     }
 }
