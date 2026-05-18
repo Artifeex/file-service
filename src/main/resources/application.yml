@@ -40,8 +40,15 @@ file-consumer:
   max-attempts: 5
   type-header-name: "event_type"
 
+app:
+  cors:
+    allowed-origins:
+      - http://localhost:5173
+      - http://127.0.0.1:5173
+
 s3:
   endpoint: ${S3_ENDPOINT:http://localhost:9000}
+  presigned-endpoint: "http://localhost:9000"
   region: ${S3_REGION:us-east-1}
   access-key: ${S3_ACCESS_KEY:admin_access_key}
   secret-key: ${S3_SECRET_KEY:admin_secret_key}
@@ -49,6 +56,17 @@ s3:
   private-bucket: ${S3_PRIVATE_BUCKET:university-private}
 server:
   port: ${SERVER_PORT:8087}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    prometheus:
+      enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
 logging:
   level:
     org.springframework.security: DEBUG

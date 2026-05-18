@@ -8,6 +8,7 @@ import org.springframework.validation.annotation.Validated;
 @ConfigurationProperties(prefix = "s3")
 public record S3Properties(
         @NotBlank String endpoint, // Не должен заканчиваться на слэш. Т.е. должен быть в формате localhost:9090
+        String presignedEndpoint, // Endpoint, который будет попадать в presigned URL для внешних клиентов
         @NotBlank String region,
         @NotBlank String accessKey,
         @NotBlank String secretKey,
