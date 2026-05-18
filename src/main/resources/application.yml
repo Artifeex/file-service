@@ -48,7 +48,7 @@ app:
 
 s3:
   endpoint: ${S3_ENDPOINT:http://localhost:9000}
-  presigned-endpoint: "http://localhost:9000"
+  presigned-endpoint: ${S3_PRESIGNED_ENDPOINT:http://localhost:9000}
   region: ${S3_REGION:us-east-1}
   access-key: ${S3_ACCESS_KEY:admin_access_key}
   secret-key: ${S3_SECRET_KEY:admin_secret_key}

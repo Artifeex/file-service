@@ -15,4 +15,15 @@ public record S3Properties(
         @NotBlank String publicBucket,
         @NotBlank String privateBucket
 ) {
+
+    /**
+     * Endpoint, доступный клиентам (браузер, фронтенд). В Docker внутренний endpoint — minio:9000,
+     * а presigned/public URL должны указывать на localhost (или внешний хост).
+     */
+    public String externalEndpoint() {
+        if (presignedEndpoint != null && !presignedEndpoint.isBlank()) {
+            return presignedEndpoint;
+        }
+        return endpoint;
+    }
 }

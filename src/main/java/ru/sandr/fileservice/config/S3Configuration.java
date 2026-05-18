@@ -36,14 +36,10 @@ public class S3Configuration {
                                                                   .pathStyleAccessEnabled(true)
                                                                   .build();
 
-        String presignedEndpoint = s3Properties.presignedEndpoint() != null
-                ? s3Properties.presignedEndpoint()
-                : s3Properties.endpoint();
-
         return S3Presigner.builder()
                           .serviceConfiguration(s3Configuration)
                           .region(Region.of(s3Properties.region()))
-                          .endpointOverride(URI.create(presignedEndpoint))
+                          .endpointOverride(URI.create(s3Properties.externalEndpoint()))
                           .credentialsProvider(StaticCredentialsProvider.create(
                                   AwsBasicCredentials.create(s3Properties.accessKey(), s3Properties.secretKey())
                           ))

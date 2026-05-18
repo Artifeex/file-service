@@ -137,7 +137,7 @@ public class FileService {
     }
 
     private String buildPublicFileUrl(String bucketName, String s3Key) {
-        return s3Properties.endpoint() + "/" + bucketName + "/" + s3Key;
+        return s3Properties.externalEndpoint() + "/" + bucketName + "/" + s3Key;
     }
 
     public void deleteFile(UUID fileId) {
