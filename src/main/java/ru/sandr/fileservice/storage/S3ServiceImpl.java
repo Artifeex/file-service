@@ -97,9 +97,16 @@ public class S3ServiceImpl implements S3Service {
 
     @Override
     public void deleteObject(String bucketName, String s3Key) {
-        s3Client.deleteObject(DeleteObjectRequest.builder()
-                                                 .bucket(bucketName)
-                                                 .key(s3Key)
-                                                 .build());
+        try {
+            s3Client.deleteObject(DeleteObjectRequest.builder()
+                                                     .bucket(bucketName)
+                                                     .key(s3Key)
+                                                     .build());
+        } catch (S3Exception exception) {
+            if (exception.statusCode() == 404 || "NoSuchKey".equals(exception.awsErrorDetails().errorCode())) {
+                return;
+            }
+            throw exception;
+        }
     }
 }

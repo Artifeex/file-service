@@ -1,0 +1,76 @@
+---
+description: File-service target architecture and API contract (event-driven commit/delete)
+alwaysApply: true
+---
+# File Service Target Architecture
+
+## Scope
+This rule defines the target architecture for `file-service` in the e-learning platform.
+
+## Core Principles
+1. **Zero Payload Proxying**: Backend must not handle file bytes. Upload/download goes directly between client and MinIO using presigned URLs.
+2. **Stateless Security**: JWT validation only (OAuth2 Resource Server, RS256 via JWKS/public key). No session state.
+3. **Domain-Scoped Responsibilities**: File service manages file metadata, S3 key generation, quotas/validation, and URL generation. Business ownership checks remain in domain services.
+4. **Event-Driven Consistency**: Upload lifecycle is `PENDING -> ACTIVE` via event-driven commit with S3 `HeadObject` verification.
+
+## Buckets and Object Layout
+- Exactly two buckets:
+  - `public-content` (public read, private write)
+  - `private-content` (private read/write)
+
+- Key patterns (current target model):
+  - User avatar: `users/{userId}/avatars/{fileId}.{ext}`
+  - Course avatar: `courses/{courseId}/avatars/{fileId}.{ext}`
+  - Course material: `courses/{courseId}/materials/{fileId}.{ext}`
+  - Answer file: `courses/{courseId}/answers/{userId}/{fileId}.{ext}`
+
+## API Contract (Target)
+### Public API
+- `POST /api/v1/files/upload-request`
+  - Authenticated endpoint.
+  - Validates role/domain/content-type/size constraints.
+  - Creates `PENDING` DB record.
+  - Returns `{fileId, uploadUrl}` with presigned PUT URL (15m).
+
+- `GET /api/v1/files/download-url/{fileId}`
+  - Authenticated endpoint.
+  - For public bucket: return static URL.
+  - For private bucket: return presigned GET URL (2h).
+
+- `GET /api/v1/files/{fileId}`
+  - Authenticated endpoint.
+  - Returns file metadata for service-to-service checks.
+
+### Internal REST Endpoints
+- Do **not** introduce `/api/v1/internal/files/*` endpoints for commit/download in current target.
+- Commit and hard-delete are event-driven via Kafka.
+
+## Event Contract (Kafka)
+- Topic: `file-topic`.
+- Header discriminator: `event_type`.
+- Supported events:
+  - `FileLoadedEvent(fileId)` -> perform commit (`HeadObject`, then mark `ACTIVE`).
+  - `FileDeletedEvent(fileId)` -> hard-delete object and metadata.
+
+## Persistence Model
+- Schema: `files`.
+- Table: `file_metadata`.
+- Status enum: `PENDING`, `ACTIVE`.
+- Keep unique `s3_key`.
+- Maintain index on `(status, created_at)` for cleanup job.
+
+## Cleanup and Reliability
+- Scheduled sweeper must run hourly:
+  - find stale `PENDING` records older than 24h,
+  - delete S3 object if exists,
+  - remove DB metadata.
+- Kafka consumer must use retry + DLQ strategy.
+- Ensure infrastructure creates required topic `file-topic` in local/dev compose.
+
+## Implementation Constraints
+- Layered architecture: Controller -> Service -> Repository/Storage.
+- Controllers must not inject repositories directly.
+- Use constructor injection (`@RequiredArgsConstructor`, `final` fields).
+- Request/response DTOs as Java records.
+- Do not return JPA entities from controllers.
+- Reuse global exception handler; no controller-level `try-catch`.

@@ -9,8 +9,14 @@ import ru.sandr.fileservice.config.S3Properties;
 import ru.sandr.fileservice.dao.FileRepository;
 import ru.sandr.fileservice.dto.DownloadUrlResponse;
 import ru.sandr.fileservice.dto.FileInfoResponse;
+import ru.sandr.fileservice.dto.upload.FileDomain;
 import ru.sandr.fileservice.dto.upload.UploadUrlRequest;
 import ru.sandr.fileservice.dto.upload.UploadUrlResponse;
+import ru.sandr.fileservice.dto.upload.context.CourseAvatarContext;
+import ru.sandr.fileservice.dto.upload.context.CourseMaterialContext;
+import ru.sandr.fileservice.dto.upload.context.FileContext;
+import ru.sandr.fileservice.dto.upload.context.TaskAnswerContext;
+import ru.sandr.fileservice.dto.upload.context.UserAvatarContext;
 import ru.sandr.fileservice.entity.FileMetadata;
 import ru.sandr.fileservice.entity.FileStatus;
 import ru.sandr.fileservice.enums.UserRole;
@@ -25,7 +31,9 @@ import ru.sandr.fileservice.storage.dto.PresignedGetUrlRequest;
 import ru.sandr.fileservice.storage.dto.PresignedPutUrlRequest;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Collection;
+import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -52,6 +60,13 @@ public class FileService {
         // Проверить, что текущий пользователь имеет право на загрузку контента, а так же, что пееданный тип является допустимым
         var domain = uploadUrlRequest.domain();
         domain.validateContentType(uploadUrlRequest.contentType());
+        if (!domain.validateSize(uploadUrlRequest.contentLength())) {
+            throw new BadRequestException(
+                    "FILE_SIZE_LIMIT_EXCEEDED",
+                    "File size exceeds max limit for domain " + domain.name()
+            );
+        }
+        validateContextMatchesDomain(domain, uploadUrlRequest.context());
         // Проверить, что текущий пользователь имеет право на загрузку данного типа контента
         UserContext userContext = new UserContext(
                 userId, authorities.stream().map(GrantedAuthority::getAuthority).collect(
@@ -143,11 +158,8 @@ public class FileService {
     public void deleteFile(UUID fileId) {
         var fileMetadata = fileRepository.findById(fileId)
                                          .orElseThrow(() -> new ObjectNotFoundException("OBJECT_NOT_FOUND", "File not found: " + fileId));
+        s3Service.deleteObject(fileMetadata.getBucketName(), fileMetadata.getS3Key());
         fileRepository.delete(fileMetadata);
-        var isFileExists = s3Service.objectExists(fileMetadata.getBucketName(), fileMetadata.getS3Key());
-        if (isFileExists) {
-            s3Service.deleteObject(fileMetadata.getBucketName(), fileMetadata.getS3Key());
-        }
     }
 
     public FileInfoResponse getFileInfo(UUID fileId) {
@@ -159,5 +171,31 @@ public class FileService {
                 fileMetadata.getContentType(),
                 fileMetadata.getStatus().name()
         );
+    }
+
+    @Transactional
+    public int cleanupExpiredPendingFiles(Duration maxAge) {
+        Instant threshold = Instant.now().minus(maxAge);
+        List<FileMetadata> expiredPendingFiles = fileRepository.findByStatusAndCreatedAtBefore(FileStatus.PENDING, threshold);
+        for (FileMetadata fileMetadata : expiredPendingFiles) {
+            s3Service.deleteObject(fileMetadata.getBucketName(), fileMetadata.getS3Key());
+            fileRepository.delete(fileMetadata);
+        }
+        return expiredPendingFiles.size();
+    }
+
+    private void validateContextMatchesDomain(FileDomain domain, FileContext context) {
+        boolean matches = switch (domain) {
+            case USER_AVATAR -> context instanceof UserAvatarContext;
+            case COURSE_AVATAR -> context instanceof CourseAvatarContext;
+            case COURSE_MATERIAL -> context instanceof CourseMaterialContext;
+            case ANSWER_FILE -> context instanceof TaskAnswerContext;
+        };
+        if (!matches) {
+            throw new BadRequestException(
+                    "INVALID_CONTEXT_FOR_DOMAIN",
+                    "Provided context does not match domain " + domain.name()
+            );
+        }
     }
 }

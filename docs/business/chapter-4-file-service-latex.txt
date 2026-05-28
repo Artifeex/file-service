@@ -1,0 +1,475 @@
+\section{Проектирование и реализация File Service}
+
+\subsection{Архитектурная роль File Service и границы ответственности}
+
+File Service является специализированным микросервисом платформы дистанционного обучения, отвечающим за учет файлов, управление S3-ключами и выдачу временных ссылок для прямой работы клиента с объектным хранилищем. В отличие от классического backend upload API, сервис не принимает и не отдает бинарное содержимое файлов через JVM-процесс. Его основная задача состоит в том, чтобы безопасно подготовить операцию загрузки или скачивания, сохранить метаданные и связать жизненный цикл записи в PostgreSQL с фактическим состоянием объекта в MinIO.
+
+Такое разделение реализует принцип \textit{zero payload proxying}. Frontend Application обращается к File Service только за управляющей информацией: идентификатором файла, S3-ключом, статусом и Presigned URL. После этого байты файла передаются напрямую между браузером пользователя и MinIO. За счет этого File Service не становится узким местом для крупных объектов, не расходует heap на multipart payload, не держит долгие HTTP-соединения для передачи медиафайлов и масштабируется по числу управляющих операций, а не по суммарному объему файлового трафика.
+
+\image{file-service-component.png}{Место File Service в микросервисной архитектуре платформы}{0.95}
+% UML source: file-service-component.puml -> file-service-component.png
+
+На компонентной диаграмме необходимо отразить Frontend Application, Users Service, Course Service, File Service, PostgreSQL, Apache Kafka, MinIO и Observability Stack. Диаграмма должна показать REST-взаимодействие клиента с File Service, прямую передачу файлов между клиентом и MinIO по Presigned URL, хранение метаданных в PostgreSQL, получение интеграционных событий через Kafka и экспорт телеметрии в observability-контур.
+
+Границы ответственности File Service определены следующим образом. Сервис владеет таблицей метаданных файлов, формированием S3-ключей, выбором bucket, проверкой базовых ограничений загрузки, генерацией Presigned PUT и Presigned GET URL, подтверждением факта загрузки через S3 \texttt{HeadObject} и физическим удалением объектов. Сервис не владеет бизнес-логикой курсов, заданий, покупки доступа к материалам или учебного прогресса. Эти решения должны оставаться в профильных сервисах, а File Service предоставляет им инфраструктурный механизм хранения файлов.
+
+В текущей реализации File Service работает как Spring Boot приложение на Java 21, использует PostgreSQL для метаданных, MinIO как S3-совместимое объектное хранилище, AWS SDK for Java v2 для операций S3 и Spring Kafka для обработки событий жизненного цикла файла. Запросы к API выполняются аутентифицированным пользователем; в данном разделе не раскрывается механизм выпуска и проверки токенов, поскольку он относится к общей security-архитектуре платформы.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Границы ответственности File Service}
+    \label{tab:file-service-boundaries}
+    \small
+    \begin{tabular}{|p{5.1cm}|p{8.7cm}|}
+        \hline
+        \textbf{Зона ответственности} & \textbf{Содержание} \\
+        \hline
+        Метаданные файлов & Хранение владельца, исходного имени, bucket, S3-ключа, размера, MIME-типа и статуса файла \\
+        \hline
+        S3 orchestration & Построение S3-ключей, выбор public/private bucket, генерация Presigned URL и выполнение служебных S3-операций \\
+        \hline
+        Lifecycle management & Создание записи \texttt{PENDING}, подтверждение через \texttt{HeadObject}, перевод в \texttt{ACTIVE}, hard delete \\
+        \hline
+        Интеграция & Получение \texttt{FileLoadedEvent} и \texttt{FileDeletedEvent} из Kafka \\
+        \hline
+        Вне границ сервиса & Передача файловых байтов через backend, бизнес-правила курсов, проверка покупки курса или доступа к уроку \\
+        \hline
+    \end{tabular}
+\end{table}
+
+\subsection{Модель метаданных файлов и жизненный цикл файла}
+
+Реляционная модель File Service минимальна и ориентирована на хранение технических атрибутов объекта. Основной сущностью является \texttt{FileMetadata}, которая соответствует таблице \texttt{files.file\_metadata}. В качестве первичного ключа используется UUID, формируемый до построения S3-ключа. Это позволяет использовать один и тот же идентификатор как публичную ссылку на файл внутри платформы и как часть имени объекта в MinIO.
+
+\image{file-service-er.png}{ER-модель метаданных File Service}{0.92}
+% UML source: file-service-er.puml -> file-service-er.png
+
+На ER-диаграмме необходимо показать таблицу \texttt{files.file\_metadata}, ее первичный ключ, уникальность \texttt{s3\_key}, индекс по \texttt{owner\_id} и составной индекс по \texttt{(status, created\_at)}. Составной индекс используется для эффективной выборки просроченных неподтвержденных файлов в фоновой очистке.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Поля таблицы \texttt{files.file\_metadata}}
+    \label{tab:file-metadata-fields}
+    \small
+    \begin{tabular}{|p{3.6cm}|p{3.1cm}|p{7.0cm}|}
+        \hline
+        \textbf{Поле} & \textbf{Тип} & \textbf{Назначение} \\
+        \hline
+        \texttt{id} & UUID & Идентификатор файла в платформе и основа имени объекта \\
+        \hline
+        \texttt{owner\_id} & UUID & Идентификатор пользователя, инициировавшего загрузку \\
+        \hline
+        \texttt{file\_name} & String & Исходное имя файла с расширением \\
+        \hline
+        \texttt{bucket\_name} & String & Bucket MinIO, в котором должен находиться объект \\
+        \hline
+        \texttt{s3\_key} & String & Уникальный ключ объекта внутри bucket \\
+        \hline
+        \texttt{size\_bytes} & Long & Размер файла, заявленный при создании upload request \\
+        \hline
+        \texttt{content\_type} & String & MIME-тип объекта, используемый при генерации URL \\
+        \hline
+        \texttt{status} & Enum & Состояние жизненного цикла: \texttt{PENDING} или \texttt{ACTIVE} \\
+        \hline
+        \texttt{created\_at}, \texttt{updated\_at} & Timestamp & Временные метки создания и изменения записи \\
+        \hline
+    \end{tabular}
+\end{table}
+
+Статусная модель состоит из двух явных состояний: \texttt{PENDING} и \texttt{ACTIVE}. Запись создается в состоянии \texttt{PENDING} в момент выдачи Presigned PUT URL. На этом этапе File Service уже зарезервировал идентификатор, S3-ключ и bucket, но объект в MinIO может еще не существовать: пользователь мог не начать загрузку, прервать ее или загрузить объект позднее в пределах срока действия ссылки.
+
+Переход в \texttt{ACTIVE} выполняется не синхронно с upload request, а после внешнего подтверждения. Когда профильный сервис привязывает файл к бизнес-сущности, он публикует \texttt{FileLoadedEvent}. File Service получает событие, выполняет \texttt{HeadObject} в MinIO и только при наличии объекта переводит запись в \texttt{ACTIVE}. Такой подход соответствует модели eventual consistency: метаданные появляются раньше, чем система окончательно признает файл загруженным и доступным для использования.
+
+\image{file-lifecycle-state.png}{Жизненный цикл файла в File Service}{0.86}
+% UML source: file-lifecycle-state.puml -> file-lifecycle-state.png
+
+Финальное состояние в базе данных для удаленного файла не хранится. При получении \texttt{FileDeletedEvent} или при очистке просроченных \texttt{PENDING}-записей сервис выполняет hard delete: удаляет объект из MinIO и строку метаданных из PostgreSQL. Такой вариант проще для MVP и не требует отдельной модели soft delete, но предполагает, что история использования файла фиксируется в бизнес-сервисах, если она нужна для аудита.
+
+\subsection{Концепция безопасного прямого доступа к MinIO через S3 Presigned URL}
+
+S3 Presigned URL используется как механизм временной делегации доступа к конкретной операции над конкретным объектом. File Service, обладая S3 credentials на backend-стороне, формирует ссылку, которую клиент может использовать без знания access key и secret key. В результате клиент получает право выполнить только заранее определенный HTTP-запрос: например, \texttt{PUT} для загрузки объекта по заданному ключу или \texttt{GET} для скачивания приватного объекта.
+
+В платформе используются два класса bucket. Public bucket предназначен для объектов, которые можно читать напрямую без подписанной ссылки: например, аватары пользователей и обложки курсов. Private bucket предназначен для учебных материалов и ответов на задания, где чтение должно выполняться только через временный Presigned GET URL. Разделение по bucket упрощает эксплуатационную модель: публичность или приватность задается политикой bucket, а не набором условных правил для каждого отдельного объекта.
+
+Механизм формирования Presigned URL состоит из нескольких шагов. File Service определяет HTTP-метод операции: \texttt{PUT} для загрузки или \texttt{GET} для скачивания. Затем сервис задает bucket, S3 key, срок действия ссылки, MIME-тип объекта и необходимые HTTP-заголовки, которые должны участвовать в подписываемом запросе. Эти параметры передаются в AWS SDK for Java v2, после чего SDK строит canonical request в S3-совместимом формате: нормализует путь к объекту, query string, набор подписанных заголовков и хэшируемые компоненты запроса.
+
+Далее SDK формирует строку для подписи и вычисляет S3-compatible signature на основе credentials, региона, даты и service scope. Итоговая ссылка содержит endpoint MinIO, bucket, S3 key и query-параметры подписи. К таким параметрам относятся идентификатор алгоритма, credential scope, дата подписи, срок действия, список signed headers и сама signature. MinIO при получении запроса восстанавливает canonical request из фактического HTTP-запроса и сравнивает подпись; если метод, путь, заголовки или срок действия не совпадают с подписанными значениями, операция отклоняется.
+
+С практической точки зрения Presigned URL дает несколько важных свойств безопасности. Во-первых, S3 credentials никогда не передаются в браузер. Во-вторых, ссылка ограничена временем жизни: в текущей реализации Presigned PUT действует 15 минут, а Presigned GET для приватного bucket -- 2 часа. В-третьих, ссылка привязана к конкретному bucket и S3 key, поэтому ее нельзя использовать для произвольной записи в хранилище. В-четвертых, при создании upload request проверяются MIME-тип входящего файла и ограничение размера; это снижает риск загрузки недопустимых объектов и не позволяет пользователю бесконтрольно занять значительный объем S3-хранилища.
+
+\image{seq-zero-payload-upload.png}{Прямая загрузка файла в MinIO без передачи байтов через backend}{0.95}
+% UML source: seq-zero-payload-upload.puml -> seq-zero-payload-upload.png
+
+На диаграмме необходимо показать, что Frontend сначала получает upload URL у File Service, а затем выполняет \texttt{PUT} напрямую в MinIO. File Service в этом сценарии взаимодействует с PostgreSQL и S3Presigner, но не принимает файловое содержимое в теле своего HTTP-запроса.
+
+\subsection{Алгоритм генерации Presigned URL для загрузки и скачивания файлов}
+
+REST API File Service сгруппирован вокруг трех операций: создание заявки на загрузку, получение ссылки на скачивание и получение базовой информации о файле. Все операции находятся в namespace \texttt{/api/v1/files}; ссылка на скачивание выдается через \texttt{GET /api/v1/files/download-url/\{fileId\}}.
+
+\begin{table}[htbp]
+    \centering
+    \caption{REST API File Service}
+    \label{tab:file-service-rest-api}
+    \small
+    \begin{tabular}{|p{4.5cm}|p{3.0cm}|p{6.3cm}|}
+        \hline
+        \textbf{Endpoint} & \textbf{Результат} & \textbf{Назначение} \\
+        \hline
+        \texttt{POST /api/v1/files/upload-request} & \texttt{UploadUrlResponse} & Создание \texttt{PENDING}-записи и выдача Presigned PUT URL \\
+        \hline
+        \texttt{GET /api/v1/files/download-url/\{fileId\}} & \texttt{DownloadUrlResponse} & Выдача public direct URL или Presigned GET URL для \texttt{ACTIVE}-файла \\
+        \hline
+        \texttt{GET /api/v1/files/\{fileId\}} & \texttt{FileInfoResponse} & Получение базовых метаданных файла по идентификатору \\
+        \hline
+    \end{tabular}
+\end{table}
+
+\subsubsection{Создание заявки на загрузку}
+
+Сценарий загрузки начинается с запроса \texttt{POST /api/v1/files/upload-request}. Клиент передает исходное имя файла, домен загрузки, MIME-тип, размер и контекст, необходимый для построения S3-ключа. Контекст зависит от домена: для аватара пользователя требуется идентификатор пользователя, для материалов курса -- идентификатор курса, для ответа на задание -- идентификатор курса и пользователя.
+
+File Service проверяет соответствие контекста выбранному домену, допустимость MIME-типа и ограничение размера. Далее на основе ролей пользователя выбирается upload policy. В текущей реализации студент не может загружать аватары курсов и материалы курсов, а преподаватель и администратор могут загружать все поддерживаемые домены. После этого сервис генерирует \texttt{fileId}, строит S3 key, выбирает bucket, сохраняет \texttt{FileMetadata} со статусом \texttt{PENDING} и возвращает Presigned PUT URL.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Домены загрузки и правила построения S3-ключей}
+    \label{tab:file-domains-s3-keys}
+    \small
+    \begin{tabular}{|p{3.2cm}|p{3.1cm}|p{7.4cm}|}
+        \hline
+        \textbf{Домен} & \textbf{Bucket} & \textbf{Шаблон S3 key} \\
+        \hline
+        \texttt{USER\_AVATAR} & Public & \texttt{users/\{userId\}/avatars/\{fileId\}.ext} \\
+        \hline
+        \texttt{COURSE\_AVATAR} & Public & \texttt{courses/\{courseId\}/avatars/\{fileId\}.ext} \\
+        \hline
+        \texttt{COURSE\_MATERIAL} & Private & \texttt{courses/\{courseId\}/materials/\{fileId\}.ext} \\
+        \hline
+        \texttt{ANSWER\_FILE} & Private & \texttt{courses/\{courseId\}/answers/\{userId\}/\{fileId\}.ext} \\
+        \hline
+    \end{tabular}
+\end{table}
+
+\image{seq-create-upload-url.png}{Создание заявки на загрузку и выдача Presigned PUT URL}{0.95}
+% UML source: seq-create-upload-url.puml -> seq-create-upload-url.png
+
+На диаграмме необходимо отразить получение запроса от клиента, проверку домена и policy, генерацию UUID, построение S3 key, сохранение \texttt{PENDING}-метаданных в PostgreSQL и генерацию Presigned PUT URL через S3Presigner.
+
+\subsubsection{Получение ссылки на скачивание}
+
+Сценарий скачивания начинается с запроса \texttt{GET /api/v1/files/download-url/\{fileId\}}. File Service получает запись метаданных по идентификатору и проверяет, что файл находится в состоянии \texttt{ACTIVE}. Это важно, поскольку наличие записи \texttt{PENDING} еще не означает, что объект действительно загружен в MinIO и может быть безопасно использован платформой.
+
+Дальнейшее поведение зависит от bucket. Если файл расположен в public bucket, сервис возвращает прямой URL вида \texttt{\{externalEndpoint\}/\{bucket\}/\{s3Key\}}. Для публичных аватаров и обложек такой вариант проще и дешевле: ссылка не требует отдельной подписи и может использоваться браузером как статический ресурс. Если файл расположен в private bucket, сервис проверяет доступ и генерирует Presigned GET URL сроком на 2 часа. В текущей реализации администратор и преподаватель имеют доступ к приватным файлам, а студент может получить ссылку только на файл, владельцем которого он является. Это ускоряет MVP-сценарий, но является архитектурным trade-off: в долгосрочной модели правила доступа к учебному материалу логичнее держать в Course Service или Homework-сервисе.
+
+\image{seq-download-url.png}{Получение ссылки на скачивание файла}{0.95}
+% UML source: seq-download-url.puml -> seq-download-url.png
+
+На диаграмме необходимо показать проверку статуса файла, ветку для public bucket с возвратом прямой ссылки и ветку для private bucket с проверкой доступа и генерацией Presigned GET URL.
+
+\subsection{Подтверждение загрузки и интеграция через Kafka}
+
+Интеграция через Kafka связывает инфраструктурный жизненный цикл файла с бизнес-сценариями других сервисов. После выдачи upload URL File Service не знает, был ли объект фактически загружен пользователем и был ли он привязан к бизнес-сущности. Поэтому подтверждение выполняется по событию \texttt{FileLoadedEvent}, которое публикует профильный сервис после успешной привязки файла, например к профилю пользователя, курсу или учебному материалу.
+
+File Service потребляет события из \texttt{file-topic}. При получении \texttt{FileLoadedEvent} обработчик извлекает \texttt{fileId} и вызывает операцию \texttt{commitFile}. Сервис загружает метаданные из PostgreSQL и, если запись находится в состоянии \texttt{PENDING}, выполняет \texttt{HeadObject} в MinIO. Если объект существует, статус меняется на \texttt{ACTIVE}. Если объект не найден, файл не подтверждается: это защищает систему от ситуации, когда бизнес-сервис получил идентификатор файла, но пользователь не завершил прямую загрузку в MinIO.
+
+\image{seq-file-loaded-commit.png}{Подтверждение файла через FileLoadedEvent и HeadObject}{0.95}
+% UML source: seq-file-loaded-commit.puml -> seq-file-loaded-commit.png
+
+На диаграмме необходимо показать публикацию \texttt{FileLoadedEvent} в Kafka, обработку события File Service, чтение метаданных из PostgreSQL, проверку объекта через \texttt{HeadObject} и перевод статуса из \texttt{PENDING} в \texttt{ACTIVE}.
+
+Второй тип события -- \texttt{FileDeletedEvent}. Он используется, когда бизнес-сервис удаляет или заменяет сущность, связанную с файлом: например, старый аватар пользователя, обложку курса или материал. При получении события File Service выполняет hard delete: удаляет объект в MinIO и удаляет строку метаданных. Эта операция освобождает объектное хранилище и не оставляет в File Service записей, на которые больше не ссылается бизнес-домен.
+
+\subsection{Очистка неподтвержденных и удаленных файлов}
+
+Так как upload request и фактическая загрузка объекта разделены во времени, в системе неизбежно появляются неподтвержденные записи. Пользователь может запросить Presigned PUT URL, закрыть страницу, потерять сеть или загрузить файл, который затем не будет привязан к бизнес-сущности. Для восстановления консистентности File Service содержит фоновую очистку \texttt{PENDING}-файлов.
+
+\image{act-pending-cleanup.png}{Очистка просроченных PENDING-файлов}{0.90}
+% UML source: act-pending-cleanup.puml -> act-pending-cleanup.png
+
+Фоновая задача \texttt{PendingFilesCleanupScheduler} запускается каждый час. Она передает в сервисный слой TTL 24 часа, после чего File Service вычисляет пороговое время, выбирает записи со статусом \texttt{PENDING} и \texttt{created\_at} раньше этого порога, удаляет соответствующие объекты из MinIO и удаляет строки из PostgreSQL. Даже если объект не был загружен, попытка удаления в S3 является приемлемой частью cleanup flow: после нее запись метаданных больше не будет занимать место в базе и не сможет быть подтверждена задним числом.
+
+Отдельный сценарий удаления связан не с просрочкой, а с внешним бизнес-событием. Если другой сервис публикует \texttt{FileDeletedEvent}, File Service должен удалить активный или ожидающий файл независимо от его возраста. Это важно для замены аватаров, удаления материалов курса и других операций, где владелец бизнес-агрегата явно сообщает, что файл больше не нужен.
+
+\image{seq-file-deleted-event.png}{Hard delete файла по FileDeletedEvent}{0.95}
+% UML source: seq-file-deleted-event.puml -> seq-file-deleted-event.png
+
+На диаграмме необходимо показать получение \texttt{FileDeletedEvent} из Kafka, загрузку метаданных, удаление объекта в MinIO и удаление строки из PostgreSQL. В отличие от cleanup scheduler, этот сценарий запускается не по времени, а по интеграционному событию от бизнес-сервиса.
+
+Комбинация двух механизмов удаления закрывает разные классы несогласованности. Scheduler очищает незавершенные upload flow и предотвращает накопление \texttt{PENDING}-записей. \texttt{FileDeletedEvent} удаляет файлы, которые уже были связаны с бизнес-сущностями, но стали неактуальными. При этом File Service не должен самостоятельно удалять \texttt{ACTIVE}-файлы только по возрасту: срок жизни активного файла определяется доменным сервисом, которому принадлежит соответствующая бизнес-сущность.
+
+
+================================================================================
+Исходные тексты UML-диаграмм PlantUML
+================================================================================
+
+Соответствие изображений и PlantUML-исходников:
+
+- file-service-component.png <- file-service-component.puml
+- file-service-er.png <- file-service-er.puml
+- file-lifecycle-state.png <- file-lifecycle-state.puml
+- seq-zero-payload-upload.png <- seq-zero-payload-upload.puml
+- seq-create-upload-url.png <- seq-create-upload-url.puml
+- seq-download-url.png <- seq-download-url.puml
+- seq-file-loaded-commit.png <- seq-file-loaded-commit.puml
+- act-pending-cleanup.png <- act-pending-cleanup.puml
+- seq-file-deleted-event.png <- seq-file-deleted-event.puml
+
+Диаграмма: file-service-component.puml
+
+@startuml file-service-component
+title File Service в микросервисной архитектуре платформы
+
+actor "Студент" as Student
+actor "Преподаватель" as Teacher
+actor "Администратор" as Admin
+
+component "Frontend Application" as FE
+component "Users Service" as US
+component "Course Service" as CS
+component "File Service" as FS
+database "PostgreSQL\n(files schema)" as DB
+queue "Apache Kafka" as Kafka
+cloud "MinIO\nS3-compatible storage" as MinIO
+component "Observability Stack" as OBS
+
+Student --> FE
+Teacher --> FE
+Admin --> FE
+
+FE --> FS : REST/JSON\nupload request, download-url
+FE --> MinIO : PUT/GET file bytes\nPresigned URL
+
+US --> FS : REST/JSON\nfile metadata
+CS --> FS : REST/JSON\ndownload-url
+
+US --> Kafka : FileLoadedEvent\nFileDeletedEvent
+CS --> Kafka : FileLoadedEvent\nFileDeletedEvent
+Kafka --> FS : file lifecycle events
+
+FS --> DB : file metadata
+FS --> MinIO : S3 API\npresign, HeadObject, DeleteObject
+FS ..> OBS : metrics, logs, traces
+
+note right of FS
+  File Service does not proxy file bytes.
+  It manages metadata, S3 keys,
+  presigned URLs and lifecycle state.
+end note
+@enduml
+
+Диаграмма: file-service-er.puml
+
+@startuml file-service-er
+title ER-модель метаданных File Service
+
+entity "files.file_metadata" as file_metadata {
+  * id : UUID <<PK>>
+  --
+  * owner_id : UUID <<IDX>>
+  * file_name : varchar
+  * bucket_name : varchar
+  * s3_key : varchar <<UNIQUE>>
+  * size_bytes : bigint
+  * content_type : varchar
+  * status : varchar
+  * created_at : timestamp
+  * updated_at : timestamp
+}
+
+note right of file_metadata
+  status in (PENDING, ACTIVE)
+  index: owner_id
+  index: (status, created_at)
+  unique: s3_key
+end note
+@enduml
+
+Диаграмма: file-lifecycle-state.puml
+
+@startuml file-lifecycle-state
+title Жизненный цикл файла в File Service
+
+[*] --> PENDING : Запрос на загрузку\n Сохранение metadata
+
+PENDING --> ACTIVE : Получили FileLoadedEvent\nHeadObject успешно отработал
+PENDING --> DELETED : Очищение после 24h\n
+
+ACTIVE --> DELETED : Получили FileDeletedEvent\n
+PENDING --> DELETED : Получили FileDeletedEvent\n
+
+note right of PENDING
+  Metadata сохранена в PostgreSQL
+  Объект может все еще не существовать в MinIO 
+end note
+
+note right of ACTIVE
+  Объект загружен в MinIO и
+связан с бизнес-сущностью
+end note
+
+note right of DELETED
+  Объект удален из MinIO 
+вместе с записью из PostgreSQL
+end note
+@enduml
+
+Диаграмма: seq-zero-payload-upload.puml
+
+@startuml seq-zero-payload-upload
+title Прямая загрузка файла в MinIO без передачи байтов через backend
+
+actor "User" as User
+participant "Frontend Application" as FE
+participant "File Service" as FS
+database "PostgreSQL" as DB
+cloud "MinIO" as MinIO
+
+User -> FE : Select file
+FE -> FS : POST /api/v1/files/upload-request\nmetadata only
+FS -> FS : Validate domain, MIME type,\nsize and upload policy
+FS -> DB : Save FileMetadata(status=PENDING)
+FS -> FS : Generate Presigned PUT URL
+FS --> FE : fileId, uploadUrl
+FE -> MinIO : PUT object bytes\nusing uploadUrl
+MinIO --> FE : 200 OK
+
+note over FS
+  File bytes are not sent
+  through File Service.
+end note
+@enduml
+
+Диаграмма: seq-create-upload-url.puml
+
+@startuml seq-create-upload-url
+title Создание заявки на загрузку и выдача Presigned PUT URL
+
+actor "Authenticated User" as User
+participant "Frontend Application" as FE
+participant "FileController" as Controller
+participant "FileService" as Service
+participant "UploadPolicy" as Policy
+participant "S3KeyBuilder" as KeyBuilder
+database "PostgreSQL" as DB
+participant "S3Presigner" as Presigner
+
+User -> FE : Choose file
+FE -> Controller : POST /api/v1/files/upload-request
+Controller -> Service : createUploadRequest(request, userId, roles)
+Service -> Service : Validate content type,\nsize and context
+Service -> Policy : checkPermission(domain, userContext)
+Policy --> Service : allowed
+Service -> Service : Generate fileId
+Service -> KeyBuilder : build(request, fileId)
+KeyBuilder --> Service : s3Key
+Service -> KeyBuilder : resolveBucketName(domain)
+KeyBuilder --> Service : bucketName
+Service -> DB : Insert FileMetadata(status=PENDING)
+Service -> Presigner : Presign PUT(bucket, key,\ncontentType, 15 min)
+Presigner --> Service : uploadUrl
+Service --> Controller : UploadUrlResponse
+Controller --> FE : fileId, uploadUrl
+@enduml
+
+Диаграмма: seq-download-url.puml
+
+@startuml seq-download-url
+title Получение ссылки на скачивание файла
+
+actor "Authenticated User" as User
+participant "Frontend Application" as FE
+participant "FileController" as Controller
+participant "FileService" as Service
+database "PostgreSQL" as DB
+participant "S3Presigner" as Presigner
+
+User -> FE : Open file
+FE -> Controller : GET /api/v1/files/download-url/{fileId}
+Controller -> Service : generateDownloadUrl(userContext, fileId)
+Service -> DB : Find FileMetadata by fileId
+DB --> Service : metadata
+Service -> Service : Require status == ACTIVE
+
+alt public bucket
+  Service -> Service : Build direct public URL
+  Service --> Controller : DownloadUrlResponse(publicUrl)
+else private bucket
+  Service -> Service : Check download permission
+  Service -> Presigner : Presign GET(metadata, 2 hours)
+  Presigner --> Service : downloadUrl
+  Service --> Controller : DownloadUrlResponse(downloadUrl)
+end
+
+Controller --> FE : downloadUrl
+FE -> FE : Browser uses returned URL
+@enduml
+
+Диаграмма: seq-file-loaded-commit.puml
+
+@startuml seq-file-loaded-commit
+title Подтверждение файла через FileLoadedEvent и HeadObject
+
+participant "Business Service\n(Users/Course)" as BS
+queue "Apache Kafka\nfile-topic" as Kafka
+participant "FileEventListener" as Listener
+participant "FileService" as Service
+database "PostgreSQL" as DB
+cloud "MinIO" as MinIO
+
+BS -> Kafka : Publish FileLoadedEvent(fileId)
+Kafka -> Listener : Consume FileLoadedEvent
+Listener -> Service : commitFile(fileId)
+Service -> DB : Find FileMetadata by id
+DB --> Service : metadata(status=PENDING)
+
+alt status is PENDING
+  Service -> MinIO : HeadObject(bucket, s3Key)
+  MinIO --> Service : Object exists
+  Service -> DB : Update status = ACTIVE
+else already ACTIVE
+  Service --> Listener : No state change
+end
+@enduml
+
+Диаграмма: act-pending-cleanup.puml
+
+@startuml act-pending-cleanup
+title Очистка просроченных PENDING-файлов
+
+start
+:Scheduler starts every hour;
+:Set threshold = now - 24 hours;
+:Find files where status = PENDING\nand created_at < threshold;
+
+while (Has next expired file?) is (yes)
+  :Load FileMetadata;
+  :DeleteObject(bucket, s3Key) in MinIO;
+  :Delete metadata row in PostgreSQL;
+endwhile (no)
+
+:Return deleted count;
+stop
+@enduml
+
+Диаграмма: seq-file-deleted-event.puml
+
+@startuml seq-file-deleted-event
+title Hard delete файла по FileDeletedEvent
+
+participant "Business Service\n(Users/Course)" as BS
+queue "Apache Kafka\nfile-topic" as Kafka
+participant "FileEventListener" as Listener
+participant "FileService" as Service
+database "PostgreSQL" as DB
+cloud "MinIO" as MinIO
+
+BS -> Kafka : Publish FileDeletedEvent(fileId)
+Kafka -> Listener : Consume FileDeletedEvent
+Listener -> Service : deleteFile(fileId)
+Service -> DB : Find FileMetadata by id
+DB --> Service : metadata
+Service -> MinIO : DeleteObject(bucket, s3Key)
+MinIO --> Service : Deleted or object absent
+Service -> DB : Delete FileMetadata row
+Service --> Listener : Completed
+@enduml

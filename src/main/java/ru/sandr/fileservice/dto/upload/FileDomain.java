@@ -33,4 +33,8 @@ public enum FileDomain {
         return allowedContentTypes.contains(contentType.toLowerCase());
     }
 
+    public boolean validateSize(long contentLength) {
+        return contentLength <= maxSizeBytes;
+    }
+
 }

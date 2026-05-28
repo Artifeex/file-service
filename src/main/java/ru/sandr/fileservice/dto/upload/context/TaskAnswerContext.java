@@ -1,13 +1,13 @@
 package ru.sandr.fileservice.dto.upload.context;
 
 import com.fasterxml.jackson.annotation.JsonTypeName;
+import jakarta.validation.constraints.NotNull;
 
 import java.util.UUID;
 
-@JsonTypeName("TASK_ANSWER")
+@JsonTypeName("ANSWER_FILE")
 public record TaskAnswerContext(
-        String domain,
-        UUID courseId,
-        UUID userId
+        @NotNull UUID courseId,
+        @NotNull UUID userId
 ) implements FileContext {
 }
