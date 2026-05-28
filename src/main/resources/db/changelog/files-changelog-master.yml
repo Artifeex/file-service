@@ -3,9 +3,3 @@ databaseChangeLog:
       file: db/changelog/files/0001-create-files-schema.sql
   - include:
       file: db/changelog/files/0002-create-files-table.yml
-      preConditions:
-        - onFail: MARK_RAN
-        - not:
-            tableExists:
-              schemaName: files
-              tableName: file_metadata
