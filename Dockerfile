@@ -78,7 +78,7 @@ EXPOSE 8080
 
 # Переменные окружения для настройки JVM в контейнере
 # Spring Boot 3 отлично работает с контейнерами "из коробки", но мы задаем лимиты RAM
-ENV JAVA_OPTS="-XX:InitialRAMPercentage=50.0 -XX:MaxRAMPercentage=80.0 -XX:+UseZGC -XX:+ZGenerational"
+ENV JAVA_OPTS="-XX:InitialRAMPercentage=10.0 -XX:MaxRAMPercentage=80.0 -XX:+UseZGC -XX:+ZGenerational"
 
 # Запуск. Под капотом он возьмет JarLauncher(это точка входа в наш проект) и будет запущен thin.jar + libs из extracted/dependencies
 ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar *.jar"]

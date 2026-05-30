@@ -55,8 +55,8 @@ s3:
   region: ${S3_REGION:us-east-1}
   access-key: ${S3_ACCESS_KEY:admin_access_key}
   secret-key: ${S3_SECRET_KEY:admin_secret_key}
-  public-bucket: ${S3_PUBLIC_BUCKET:university-public}
-  private-bucket: ${S3_PRIVATE_BUCKET:university-private}
+  public-bucket: ${S3_PUBLIC_BUCKET:public-content}
+  private-bucket: ${S3_PRIVATE_BUCKET:private-content}
 server:
   port: ${SERVER_PORT:8087}
   tomcat:
@@ -80,7 +80,4 @@ management:
         http.server.requests: 100ms,250ms,500ms,1s,2s,5s
 logging:
   level:
-    org.springframework.security: DEBUG
-    org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter: TRACE
-    org.springframework.web.HttpLogging: DEBUG
-    org.apache.catalina.core.ContainerBase: DEBUG
+    org.apache.kafka: ERROR
