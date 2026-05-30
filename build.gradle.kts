@@ -1,6 +1,6 @@
 plugins {
     java
-    id("org.springframework.boot") version "3.3.5"
+    id("org.springframework.boot") version "3.5.11"
     id("io.spring.dependency-management") version "1.1.7"
 }
 
@@ -30,6 +30,8 @@ dependencies {
     // Source: https://mvnrepository.com/artifact/software.amazon.awssdk/s3
     implementation("software.amazon.awssdk:s3:2.42.38")
     implementation("org.springframework.kafka:spring-kafka")
+    // OpenAPI 3 + Swagger UI (https://springdoc.org)
+    implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.9")
     testImplementation("org.springframework.kafka:spring-kafka-test")
     runtimeOnly("org.postgresql:postgresql")
     compileOnly("org.projectlombok:lombok")
