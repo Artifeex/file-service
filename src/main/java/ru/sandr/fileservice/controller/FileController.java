@@ -26,7 +26,7 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/v1/files")
+@RequestMapping("/fs/api/v1/files")
 @Tag(name = "Files")
 @SecurityRequirement(name = "bearerAuth")
 public class FileController {

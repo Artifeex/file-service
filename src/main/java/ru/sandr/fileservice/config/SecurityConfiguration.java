@@ -34,15 +34,15 @@ public class SecurityConfiguration {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
-                                "/swagger-ui.html",
-                                "/swagger-ui/**",
-                                "/v3/api-docs",
-                                "/v3/api-docs/**"
+                                "/fs/swagger-ui.html",
+                                "/fs/swagger-ui/**",
+                                "/fs/v3/api-docs",
+                                "/fs/v3/api-docs/**"
                         ).permitAll()
                         .requestMatchers("/actuator/health").permitAll()
                         .requestMatchers("/actuator/prometheus").permitAll()
                         .requestMatchers("/actuator/info").permitAll()
-                        .requestMatchers("/api/v1/**").authenticated()
+                        .requestMatchers("/fs/api/v1/**").authenticated()
                         .requestMatchers("/error").permitAll()
                         .anyRequest().denyAll()
                 )

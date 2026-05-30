@@ -82,10 +82,11 @@ logging:
   level:
     org.apache.kafka: ERROR
 
-# Swagger UI: http://localhost:8087/swagger-ui.html (redirects to /swagger-ui/index.html)
-# OpenAPI JSON: http://localhost:8087/v3/api-docs
+# Swagger UI: http://localhost:8087/us/swagger-ui.html
+# OpenAPI JSON: http://localhost:8087/us/v3/api-docs
 springdoc:
   api-docs:
-    path: /v3/api-docs
+    path: /fs/v3/api-docs
   swagger-ui:
-    path: /swagger-ui.html
+    path: /fs/swagger-ui.html
+    url: /fs/v3/api-docs
