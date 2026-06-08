@@ -318,24 +318,24 @@ end note
 @startuml seq-zero-payload-upload
 title Прямая загрузка файла в MinIO без передачи байтов через backend
 
-actor "User" as User
+actor "Пользователь" as User
 participant "Frontend Application" as FE
 participant "File Service" as FS
 database "PostgreSQL" as DB
-cloud "MinIO" as MinIO
+database "MinIO" as MinIO
 
-User -> FE : Select file
-FE -> FS : POST /api/v1/files/upload-request\nmetadata only
-FS -> FS : Validate domain, MIME type,\nsize and upload policy
-FS -> DB : Save FileMetadata(status=PENDING)
-FS -> FS : Generate Presigned PUT URL
-FS --> FE : fileId, uploadUrl
-FE -> MinIO : PUT object bytes\nusing uploadUrl
+User -> FE : Выбирает файл\n для загрузки
+FE -> FS : POST /api/v1/files/upload-request\nс метаинформацией о файле\nи доменом
+FS -> FS : Проверяет domain, роль пользователя\n, MIME type, size
+FS -> DB : Сохраняет метадату о файле\nи его положении в S3(status=PENDING)
+FS -> FS : Генерирует Presigned PUT URL
+FS --> FE : Возвращает fileId, uploadUrl
+FE -> MinIO : Используя HTTP PUT и upload url\nзагружает файл в S3 
 MinIO --> FE : 200 OK
 
 note over FS
-  File bytes are not sent
-  through File Service.
+  Байты файла загружены в S3,
+минуя File Service
 end note
 @enduml
 
@@ -376,32 +376,33 @@ Controller --> FE : fileId, uploadUrl
 @startuml seq-download-url
 title Получение ссылки на скачивание файла
 
-actor "Authenticated User" as User
+actor "Пользователь" as User
 participant "Frontend Application" as FE
-participant "FileController" as Controller
 participant "FileService" as Service
 database "PostgreSQL" as DB
-participant "S3Presigner" as Presigner
+database "MinIO" as Minio
 
-User -> FE : Open file
-FE -> Controller : GET /api/v1/files/download-url/{fileId}
-Controller -> Service : generateDownloadUrl(userContext, fileId)
-Service -> DB : Find FileMetadata by fileId
-DB --> Service : metadata
-Service -> Service : Require status == ACTIVE
+User -> FE : Открывает файл
+FE -> Service : GET /api/v1/files/download-url/{fileId}
+Service -> DB : Получает FileMetadata по fileId
+DB --> Service : FileMetadata
 
-alt public bucket
-  Service -> Service : Build direct public URL
-  Service --> Controller : DownloadUrlResponse(publicUrl)
-else private bucket
-  Service -> Service : Check download permission
-  Service -> Presigner : Presign GET(metadata, 2 hours)
-  Presigner --> Service : downloadUrl
-  Service --> Controller : DownloadUrlResponse(downloadUrl)
+alt FileStatus == ACTIVE
+alt Публичный бакет
+  Service -> Service : Создает прямой публичный URL без подписи
+  Service --> FE : Ссылка на скачивание
+else Приватный бакет
+  Service -> Service : Проверяет права доступа на скачивание
+  Service -> Service : Создает подписанную downloadUrl
+  Service --> FE : Возвращает подисанную downloadUrl
+end
+else FileStatus == PENDING
+Service -> FE : Ошибка: Загрузка файла не подтверждена
 end
 
-Controller --> FE : downloadUrl
-FE -> FE : Browser uses returned URL
+FE -> Minio : Инициирует скачивание файла по downloadUrl
+Minio --> FE: Отдает файл
+
 @enduml
 
 Диаграмма: seq-file-loaded-commit.puml
@@ -411,23 +412,21 @@ title Подтверждение файла через FileLoadedEvent и HeadOb
 
 participant "Business Service\n(Users/Course)" as BS
 queue "Apache Kafka\nfile-topic" as Kafka
-participant "FileEventListener" as Listener
 participant "FileService" as Service
 database "PostgreSQL" as DB
-cloud "MinIO" as MinIO
+database "MinIO" as MinIO
 
-BS -> Kafka : Publish FileLoadedEvent(fileId)
-Kafka -> Listener : Consume FileLoadedEvent
-Listener -> Service : commitFile(fileId)
-Service -> DB : Find FileMetadata by id
-DB --> Service : metadata(status=PENDING)
+BS -> Kafka : Публикует FileLoadedEvent(fileId)
+Kafka -> Service : Слушает FileLoadedEvent
+Service -> DB : Поиск FileMetadata по fileId
+DB --> Service : FileMetadata(status=PENDING/ACTIVE)
 
-alt status is PENDING
-  Service -> MinIO : HeadObject(bucket, s3Key)
+alt Status = PENDING
+  Service -> MinIO : Выполняет проверку наличия файла в S3\nHeadObject(bucket, s3Key)
   MinIO --> Service : Object exists
-  Service -> DB : Update status = ACTIVE
-else already ACTIVE
-  Service --> Listener : No state change
+  Service -> DB : Обновляет status = ACTIVE
+else Status = ACTIVE
+  Service --> Service : Не меняет состояния
 end
 @enduml
 
@@ -437,39 +436,36 @@ end
 title Очистка просроченных PENDING-файлов
 
 start
-:Scheduler starts every hour;
-:Set threshold = now - 24 hours;
-:Find files where status = PENDING\nand created_at < threshold;
+:Задача запускается каждый час;
+:Устанавливаем порог = Текущее время - 24 hours;
+:Ищем файлы со status = PENDING\n и временем создания < порога;
 
-while (Has next expired file?) is (yes)
-  :Load FileMetadata;
-  :DeleteObject(bucket, s3Key) in MinIO;
-  :Delete metadata row in PostgreSQL;
-endwhile (no)
+while (Есть просроченные файлы?) is (Да)
+  :Загружаем FileMetadata;
+  :Извлеваем из FileMedata бакет и ключ;
+  :Попытка удалить объект из MinIO по бакету и ключу;
+  :Удаляем FileMetadata из БД;
+endwhile (Нет)
 
-:Return deleted count;
 stop
 @enduml
 
 Диаграмма: seq-file-deleted-event.puml
 
 @startuml seq-file-deleted-event
-title Hard delete файла по FileDeletedEvent
+title Удаление файла по FileDeletedEvent
 
 participant "Business Service\n(Users/Course)" as BS
 queue "Apache Kafka\nfile-topic" as Kafka
-participant "FileEventListener" as Listener
 participant "FileService" as Service
 database "PostgreSQL" as DB
-cloud "MinIO" as MinIO
+database "MinIO" as MinIO
 
-BS -> Kafka : Publish FileDeletedEvent(fileId)
-Kafka -> Listener : Consume FileDeletedEvent
-Listener -> Service : deleteFile(fileId)
-Service -> DB : Find FileMetadata by id
-DB --> Service : metadata
-Service -> MinIO : DeleteObject(bucket, s3Key)
-MinIO --> Service : Deleted or object absent
-Service -> DB : Delete FileMetadata row
-Service --> Listener : Completed
+BS -> Kafka : Публикует FileDeletedEvent(fileId)
+Kafka -> Service : Слушает FileDeletedEvent
+Service -> DB : Поиск FileMetadata по fileId
+DB --> Service : FileMetadata
+Service -> MinIO : Удаляет объект по бакету и ключу\n(получаем из FileMetadata)
+Service -> DB : Удаляет FileMetadata
 @enduml
+

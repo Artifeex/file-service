@@ -79,7 +79,12 @@ management:
       slo:
         http.server.requests: 100ms,250ms,500ms,1s,2s,5s
 logging:
+  structured:
+    format:
+      console: ecs
   level:
+    root: INFO
+    ru.sandr: INFO
     org.apache.kafka: ERROR
 
 # Swagger UI: http://localhost:8087/us/swagger-ui.html
